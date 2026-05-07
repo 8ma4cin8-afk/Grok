@@ -1,1 +1,30 @@
+name: EEN Daily Matcher
 
+on:
+  schedule:
+    - cron: '0,10,20,30,40,50 * * * *'   # co 10 minut
+  workflow_dispatch:   # pozwala uruchomić ręcznie
+
+jobs:
+  een-matching:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install requests
+
+      - name: Run EEN Matcher
+        env:
+          GMAIL_EMAIL: ${{ secrets.GMAIL_EMAIL }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GROK_API_KEY: ${{ secrets.GROK_API_KEY }}
+        run: python een_matcher.py

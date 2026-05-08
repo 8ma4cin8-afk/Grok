@@ -22,7 +22,7 @@ def fetch_new_emails():
         mail.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD)
         mail.select("inbox")
         _, messages = mail.search(None, 'UNSEEN')
-        email_ids = messages[0].split()[-10:]
+        email_ids = messages[0].split()[-12:]
 
         emails = []
         for eid in email_ids:
@@ -42,7 +42,7 @@ def fetch_new_emails():
             else:
                 body = msg.get_payload(decode=True).decode(errors="ignore")
 
-            emails.append({"subject": subject, "body": body[:8000], "date": msg["Date"]})  # mocno skrócone
+            emails.append({"subject": subject, "body": body[:12000], "date": msg["Date"]})
         mail.logout()
         return emails
     except Exception as e:
@@ -51,46 +51,56 @@ def fetch_new_emails():
 
 
 def analyze_with_grok(profile_text, subject):
-    prompt = f"""Profil EEN: {subject}
+    prompt = f"""Analizujesz JEDEN profil EEN. Nie cały pakiet.
 
-{profile_text[:7500]}
+**Profil do analizy:**
+Temat: {subject}
 
-Przygotuj zwięzły, konkretny raport dla Dolnego Śląska w formacie:
+Treść:
+{profile_text}
 
-**Profil:** {subject}
-**Ocena:** X/10
-**Polska w target?** Tak/Nie
+Przygotuj raport dokładnie w tym formacie:
 
-**Top 5 firm z DS:**
+**=== {subject} ===**
 
-| Priorytet | Firma | Lokalizacja | Dlaczego pasuje? | Kontakt |
-|-----------|-------|-------------|------------------|---------|
+**Ocena potencjału dla Dolnego Śląska:** X/10
 
-**Gotowy mail do firmy:**
+**Polska w target countries?** Tak / Nie / All countries
+
+**Krótki opis:** (2 zdania)
+
+**Top 5 firm z Dolnego Śląska:**
+
+| Priorytet | Firma | Lokalizacja | Dlaczego pasuje? | Kontakt | Komentarz |
+|-----------|-------|-------------|------------------|---------|---------|
+
+**Gotowy szablon maila** (profesjonalny, gotowy do wysłania):
 
 ---
-[Treść gotowego maila]
+[Treść całego maila]
 ---
 
-Bądź konkretny."""
+**Uwagi:**
+
+Bądź konkretny. Używaj rzeczywistych firm z Dolnego Śląska."""
 
     try:
         response = requests.post(
             "https://api.x.ai/v1/chat/completions",
             headers={"Authorization": f"Bearer {GROK_API_KEY}"},
             json={
-                "model": "grok-4",        # można zmienić na "grok-3" jeśli dalej timeout
+                "model": "grok-3",          # <-- zmieniamy na szybszy model
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
-                "max_tokens": 1400
+                "max_tokens": 1800
             },
-            timeout=75
+            timeout=80
         )
         if response.status_code != 200:
             return f"BŁĄD API: {response.status_code}"
         return response.json()["choices"][0]["message"]["content"]
     except Exception as e:
-        return f"BŁĄD: {str(e)}"
+        return f"BŁĄD GROK: {str(e)}"
 
 
 def send_report(report_content):
@@ -117,9 +127,10 @@ def main():
     for e in emails:
         if any(k in e["subject"].lower() for k in ["profile", "query", "request", "offer", "business", "enterprise"]):
             analysis = analyze_with_grok(e["body"], e["subject"])
-            report += analysis + "\n\n" + "="*80 + "\n\n"
+            report += analysis + "\n\n" + "="*100 + "\n\n"
 
     send_report(report)
+    print("Raport wysłany")
 
 if __name__ == "__main__":
     main()

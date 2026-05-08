@@ -22,7 +22,7 @@ def fetch_new_emails():
         mail.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD)
         mail.select("inbox")
         _, messages = mail.search(None, 'UNSEEN')
-        email_ids = messages[0].split()[-10:]   # mniej maili na raz
+        email_ids = messages[0].split()[-8:]
 
         emails = []
         for eid in email_ids:
@@ -42,52 +42,61 @@ def fetch_new_emails():
             else:
                 body = msg.get_payload(decode=True).decode(errors="ignore")
 
-            emails.append({
-                "subject": subject,
-                "body": body[:10000],   # ograniczamy długość
-                "date": msg["Date"]
-            })
+            emails.append({"subject": subject, "body": body[:14000], "date": msg["Date"]})
         mail.logout()
         return emails
     except Exception as e:
-        print(f"BŁĄD pobierania: {e}")
+        print(f"BŁĄD: {e}")
         return []
 
 
 def analyze_with_grok(profile_text, subject):
-    prompt = f"""Jesteś ekspertem EEN. Szybko przeanalizuj ten profil i przygotuj praktyczny raport dla Dolnego Śląska i Opolszczyzny.
+    prompt = f"""Jesteś moim bardzo doświadczonym asystentem EEN do matchingu dla Dolnego Śląska.
 
-Temat: {subject}
+Przeanalizuj poniższy profil i przygotuj **bardzo konkretny, gotowy do użycia raport** według dokładnie tego formatu:
 
-Treść profilu:
-{profile_text[:9000]}
+**Temat:** {subject}
 
-Przygotuj raport w formacie:
-- Ocena potencjału (1-10)
-- Krótki opis czego szuka partner
-- Sugestie firm / branż z DS i Opolszczyzny
-- Gotowy fragment pierwszej wiadomości do firmy"""
+**Ocena potencjału:** X/10
+
+**Krótki opis profilu:** (2-3 zdania)
+
+**Top 5 firm z Dolnego Śląska (tabela):**
+
+| Priorytet | Firma | Lokalizacja | Dlaczego pasuje? | Kontakt | Komentarz |
+|-----------|-------|-------------|------------------|---------|---------|
+
+**Gotowy szablon pierwszej wiadomości** (po polsku, gotowy do wysłania):
+
+---
+[pełny, profesjonalny mail]
+---
+
+**Dodatkowe uwagi:**
+
+Profil do analizy:
+{profile_text}
+
+Bądź maksymalnie konkretny. Używaj rzeczywistych firm z Dolnego Śląska (Wrocław, Legnica, Wałbrzych, Jelenia Góra, Lubin itd.)."""
 
     try:
         response = requests.post(
             "https://api.x.ai/v1/chat/completions",
             headers={"Authorization": f"Bearer {GROK_API_KEY}"},
             json={
-                "model": "grok-4",           # można zmienić na grok-3 jeśli dalej będzie timeout
+                "model": "grok-4",
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
-                "max_tokens": 1500
+                "max_tokens": 2200
             },
-            timeout=90                      # zmniejszony timeout
+            timeout=100
         )
         
         if response.status_code != 200:
-            return f"BŁĄD API {response.status_code}: {response.text[:300]}"
+            return f"BŁĄD API: {response.status_code}"
             
         return response.json()["choices"][0]["message"]["content"]
         
-    except requests.exceptions.Timeout:
-        return "BŁĄD: Timeout Grok API - profil za długi"
     except Exception as e:
         return f"BŁĄD GROK: {str(e)}"
 
@@ -105,26 +114,21 @@ def send_report(report_content):
         server.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD)
         server.send_message(msg)
         server.quit()
-        print("Raport wysłany")
     except Exception as e:
         print(f"Błąd wysyłki: {e}")
 
 
 def main():
-    print("Start EEN Matcher...")
     emails = fetch_new_emails()
-    
-    report = f"🔍 RAPORT EEN MATCHING\nData: {datetime.now().strftime('%Y-%m-%d %H:%M')}\nLiczba maili: {len(emails)}\n\n"
+    report = f"🔍 RAPORT EEN MATCHING\nData: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
 
     for e in emails:
-        if any(k in e["subject"].lower() for k in ["profile", "query", "request", "offer", "enterprise", "business"]):
-            print(f"Analizuję: {e['subject']}")
+        if any(k in e["subject"].lower() for k in ["profile", "query", "request", "offer", "enterprise"]):
             analysis = analyze_with_grok(e["body"], e["subject"])
-            report += f"Temat: {e['subject']}\n"
-            report += analysis + "\n\n" + "="*80 + "\n\n"
+            report += analysis + "\n\n" + "="*90 + "\n\n"
 
     send_report(report)
-    print("Zakończono.")
+    print("Raport wysłany")
 
 if __name__ == "__main__":
     main()

@@ -1,7 +1,6 @@
 import imaplib
 import email
 import os
-import json
 from datetime import datetime
 from email.header import decode_header
 import requests
@@ -24,7 +23,7 @@ def fetch_new_emails():
         mail.select("inbox")
 
         _, messages = mail.search(None, 'UNSEEN')
-        email_ids = messages[0].split()[-15:]  # ostatnie 15 maili
+        email_ids = messages[0].split()[-20:]  
 
         emails = []
         for eid in email_ids:
@@ -46,37 +45,25 @@ def fetch_new_emails():
 
             emails.append({
                 "subject": subject,
-                "body": body[:8000],  # limit dla Grok
+                "body": body[:10000],
                 "date": msg["Date"]
             })
-
         mail.logout()
         return emails
     except Exception as e:
-        print(f"Błąd pobierania maili: {e}")
+        print(f"BŁĄD pobierania maili: {e}")
         return []
 
 
-def analyze_with_grok(profile_text):
-    prompt = f"""Jesteś bardzo dobrym ekspertem matchmakingu EEN. 
+def analyze_with_grok(profile_text, subject):
+    prompt = f"""Profil EEN:
+Temat: {subject}
 
-Przeanalizuj poniższy profil i przygotuj **rozbudowany, praktyczny raport** dla konsultanta z Dolnego Śląska i Opolszczyzny.
+Treść:
+{profile_text[:8000]}
 
-Profil:
-{profile_text}
-
-Zrób analizę w formacie JSON:
-{{
-  "profile_id": "...",
-  "score": 8,
-  "potential": "Wysoki/Średni/Niski",
-  "partner_type": "krótki opis typu firmy",
-  "justification": "szczegółowe uzasadnienie",
-  "search_keywords": ["słowo1", "słowo2", ...],
-  "email_template": "Szanowni Państwo,\\n\\n..."
-}}
-
-Bądź konkretny i praktyczny."""
+Przeanalizuj ten profil i przygotuj praktyczny raport matchingowy dla Dolnego Śląska i Opolszczyzny.
+Zwróć wynik jako zwykły tekst (niekoniecznie JSON)."""
 
     try:
         response = requests.post(
@@ -86,14 +73,19 @@ Bądź konkretny i praktyczny."""
                 "model": "grok-4",
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
-                "max_tokens": 2000
+                "max_tokens": 1800
             },
-            timeout=60
+            timeout=90
         )
+        
+        if response.status_code != 200:
+            return f"Błąd API Grok: {response.status_code} - {response.text}"
+            
         result = response.json()
         return result["choices"][0]["message"]["content"]
+        
     except Exception as e:
-        return f"Błąd Grok: {str(e)}"
+        return f"BŁĄD GROK: {str(e)}"
 
 
 def send_report(report_content):
@@ -102,7 +94,7 @@ def send_report(report_content):
     msg['To'] = REPORT_TO
     msg['Subject'] = f"Raport EEN Matching - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
 
-    msg.attach(MIMEText(report_content, 'plain'))
+    msg.attach(MIMEText(report_content, 'plain', 'utf-8'))
 
     try:
         server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
@@ -111,29 +103,32 @@ def send_report(report_content):
         server.quit()
         print("Raport wysłany pomyślnie")
     except Exception as e:
-        print(f"Błąd wysyłania: {e}")
+        print(f"Błąd wysyłania maila: {e}")
 
 
 def main():
-    print("Uruchamiam EEN Matcher...")
+    print(f"[{datetime.now()}] Uruchamiam EEN Matcher...")
     emails = fetch_new_emails()
 
-    if not emails:
-        print("Brak nowych maili EEN")
-        return
+    print(f"Znaleziono {len(emails)} nowych maili")
 
     report = f"🔍 RAPORT EEN MATCHING\nData: {datetime.now().strftime('%Y-%m-%d %H:%M')}\nLiczba nowych maili: {len(emails)}\n\n"
 
     for e in emails:
-        if any(x in e["subject"] for x in ["Enterprise Europe Network", "EU-CORPORATE-NOTIFICATION-SYSTEM", "Business request", "Only Requests"]):
-            print(f"Analizuję: {e['subject']}")
-            analysis = analyze_with_grok(e["body"])
-            report += f"{'='*60}\n"
+        print(f"Przetwarzam: {e['subject']}")
+        if any(keyword in e["subject"] for keyword in ["Enterprise Europe Network", "EU-CORPORATE-NOTIFICATION-SYSTEM", "Business request", "Only Requests", "Only Offers"]):
+            analysis = analyze_with_grok(e["body"], e["subject"])
+            report += f"{'='*80}\n"
             report += f"Temat: {e['subject']}\n"
-            report += analysis + "\n\n"
+            report += f"Data: {e['date']}\n\n"
+            report += analysis
+            report += "\n\n"
+        else:
+            report += f"Pominięty mail: {e['subject']}\n\n"
 
+    print("Wysyłam raport...")
     send_report(report)
-    print("Zakończono przetwarzanie.")
+    print("Zakończono.")
 
 
 if __name__ == "__main__":

@@ -7,7 +7,6 @@ import requests
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import json
 
 # ================== KONFIGURACJA ==================
 GMAIL_EMAIL = os.getenv("GMAIL_EMAIL")
@@ -18,13 +17,13 @@ REPORT_TO = "marcin.jablonski@pwr.edu.pl"
 # =================================================
 
 def fetch_new_emails():
+    # ... (bez zmian - zostawiam jak było)
     try:
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
         mail.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD)
         mail.select("inbox")
-
         _, messages = mail.search(None, 'UNSEEN')
-        email_ids = messages[0].split()[-20:]
+        email_ids = messages[0].split()[-15:]
 
         emails = []
         for eid in email_ids:
@@ -46,61 +45,67 @@ def fetch_new_emails():
             else:
                 body = msg.get_payload(decode=True).decode(errors="ignore")
 
-            emails.append({
-                "subject": subject,
-                "body": body[:15000],
-                "date": msg["Date"]
-            })
+            emails.append({"subject": subject, "body": body[:15000], "date": msg["Date"]})
         mail.logout()
         return emails
     except Exception as e:
-        print(f"BŁĄD pobierania maili: {e}")
+        print(f"BŁĄD: {e}")
         return []
 
 
 def analyze_with_grok(profile_text, subject):
-    prompt = f"""Przeanalizuj poniższy profil EEN i przygotuj praktyczny raport matchingowy dla Dolnego Śląska i Opolszczyzny.
+    prompt = """Jesteś moim asystentem EEN specjalizującym się w matchmakingu dla Dolnego Śląska i Opolszczyzny.
 
-Temat: {subject}
+Przeanalizuj poniższy profil i przygotuj **bardzo konkretny, praktyczny raport** według następujących zasad:
+
+**Format raportu (obowiązkowy):**
+
+**Temat:** [Temat maila]
+
+**Ocena potencjału:** X/10
+
+**Typ profilu:** Business Request / Technological Request / itp.
+
+**Krótki opis czego szuka zagraniczny partner**
+
+**Top firmy z Dolnego Śląska / Opolszczyzny (tabela):**
+
+| Priorytet | Firma | Lokalizacja | Dlaczego pasuje? | Kontakt | Komentarz |
+|-----------|-------|-------------|------------------|---------|---------|
+
+**Gotowy szablon wiadomości mailowej** (profesjonalny, gotowy do wysłania):
+
+---
+[cały szablon maila]
+---
+
+**Dodatkowe uwagi** (jeśli są)
+
+Profil do analizy:
+Temat: """ + subject + """
 
 Treść:
-{profile_text}
-
-Napisz czytelny, konkretny raport z oceną potencjału, sugestiami typów firm i gotowym fragmentem wiadomości do firmy."""
+""" + profile_text
 
     try:
         response = requests.post(
             "https://api.x.ai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {GROK_API_KEY}",
-                "Content-Type": "application/json"
-            },
+            headers={"Authorization": f"Bearer {GROK_API_KEY}"},
             json={
-                "model": "grok-4.3",          # <-- zmienione na aktualny model
+                "model": "grok-4",
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,
-                "max_tokens": 2000
+                "temperature": 0.25,
+                "max_tokens": 2500
             },
             timeout=120
         )
-
-        print(f"Status API: {response.status_code}")
-
-        if response.status_code != 200:
-            print("Pełna odpowiedź błędu:", response.text)
-            return f"BŁĄD API ({response.status_code}): {response.text[:500]}"
-
-        result = response.json()
         
-        # Lepsze debugowanie
-        if "choices" not in result:
-            print("Brak 'choices' w odpowiedzi:", json.dumps(result, indent=2)[:1000])
-            return "BŁĄD: Nieprawidłowa struktura odpowiedzi z Grok"
-
-        return result["choices"][0]["message"]["content"]
-
+        if response.status_code != 200:
+            return f"BŁĄD API: {response.status_code}"
+            
+        return response.json()["choices"][0]["message"]["content"]
+        
     except Exception as e:
-        print(f"Wyjątek przy wywołaniu Grok: {e}")
         return f"BŁĄD GROK: {str(e)}"
 
 
@@ -117,30 +122,21 @@ def send_report(report_content):
         server.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD)
         server.send_message(msg)
         server.quit()
-        print("Raport wysłany pomyślnie")
+        print("Raport wysłany")
     except Exception as e:
-        print(f"Błąd wysyłania: {e}")
+        print(f"Błąd wysyłki: {e}")
 
 
 def main():
-    print(f"[{datetime.now()}] Start EEN Matcher")
     emails = fetch_new_emails()
-    print(f"Znaleziono {len(emails)} nowych maili")
-
-    report = f"🔍 RAPORT EEN MATCHING\nData: {datetime.now().strftime('%Y-%m-%d %H:%M')}\nLiczba maili: {len(emails)}\n\n"
+    report = f"🔍 RAPORT EEN MATCHING\nData: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
 
     for e in emails:
-        subject_lower = e["subject"].lower()
-        print(f"Mail: {e['subject']}")
-
-        if any(k in subject_lower for k in ["profile", "enterprise", "business", "request", "offer", "query", "partnering"]):
+        if any(k in e["subject"].lower() for k in ["profile", "query", "request", "offer", "enterprise", "business"]):
             analysis = analyze_with_grok(e["body"], e["subject"])
-            report += f"{'='*80}\nTemat: {e['subject']}\nData: {e['date']}\n\n{analysis}\n\n"
-        else:
-            report += f"Pominięty: {e['subject']}\n\n"
+            report += analysis + "\n\n" + "="*100 + "\n\n"
 
     send_report(report)
-    print("Zakończono.")
 
 if __name__ == "__main__":
     main()

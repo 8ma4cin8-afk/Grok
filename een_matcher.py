@@ -7,6 +7,7 @@ import requests
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import json
 
 # ================== KONFIGURACJA ==================
 GMAIL_EMAIL = os.getenv("GMAIL_EMAIL")
@@ -23,7 +24,7 @@ def fetch_new_emails():
         mail.select("inbox")
 
         _, messages = mail.search(None, 'UNSEEN')
-        email_ids = messages[0].split()[-30:]  
+        email_ids = messages[0].split()[-20:]
 
         emails = []
         for eid in email_ids:
@@ -47,41 +48,59 @@ def fetch_new_emails():
 
             emails.append({
                 "subject": subject,
-                "body": body[:12000],
+                "body": body[:15000],
                 "date": msg["Date"]
             })
         mail.logout()
         return emails
     except Exception as e:
-        print(f"BŁĄD pobierania: {e}")
+        print(f"BŁĄD pobierania maili: {e}")
         return []
 
 
 def analyze_with_grok(profile_text, subject):
-    prompt = f"""Jesteś ekspertem EEN. Przeanalizuj poniższy profil partneringowy i przygotuj praktyczny, rozbudowany raport matchingowy dla regionu Dolny Śląsk + Opolszczyzna.
+    prompt = f"""Przeanalizuj poniższy profil EEN i przygotuj praktyczny raport matchingowy dla Dolnego Śląska i Opolszczyzny.
 
-Temat maila: {subject}
+Temat: {subject}
 
-Treść profilu:
+Treść:
 {profile_text}
 
-Przygotuj raport w czytelnej formie (nie JSON)."""
-    
+Napisz czytelny, konkretny raport z oceną potencjału, sugestiami typów firm i gotowym fragmentem wiadomości do firmy."""
+
     try:
         response = requests.post(
             "https://api.x.ai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {GROK_API_KEY}"},
+            headers={
+                "Authorization": f"Bearer {GROK_API_KEY}",
+                "Content-Type": "application/json"
+            },
             json={
-                "model": "grok-4",
+                "model": "grok-4.3",          # <-- zmienione na aktualny model
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
                 "max_tokens": 2000
             },
-            timeout=90
+            timeout=120
         )
+
+        print(f"Status API: {response.status_code}")
+
+        if response.status_code != 200:
+            print("Pełna odpowiedź błędu:", response.text)
+            return f"BŁĄD API ({response.status_code}): {response.text[:500]}"
+
         result = response.json()
+        
+        # Lepsze debugowanie
+        if "choices" not in result:
+            print("Brak 'choices' w odpowiedzi:", json.dumps(result, indent=2)[:1000])
+            return "BŁĄD: Nieprawidłowa struktura odpowiedzi z Grok"
+
         return result["choices"][0]["message"]["content"]
+
     except Exception as e:
+        print(f"Wyjątek przy wywołaniu Grok: {e}")
         return f"BŁĄD GROK: {str(e)}"
 
 
@@ -98,35 +117,30 @@ def send_report(report_content):
         server.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD)
         server.send_message(msg)
         server.quit()
-        print("Raport wysłany")
+        print("Raport wysłany pomyślnie")
     except Exception as e:
-        print(f"Błąd wysyłki: {e}")
+        print(f"Błąd wysyłania: {e}")
 
 
 def main():
     print(f"[{datetime.now()}] Start EEN Matcher")
     emails = fetch_new_emails()
+    print(f"Znaleziono {len(emails)} nowych maili")
 
     report = f"🔍 RAPORT EEN MATCHING\nData: {datetime.now().strftime('%Y-%m-%d %H:%M')}\nLiczba maili: {len(emails)}\n\n"
 
     for e in emails:
         subject_lower = e["subject"].lower()
-        print(f"Znaleziony mail: {e['subject']}")
+        print(f"Mail: {e['subject']}")
 
-        # Rozszerzone filtrowanie
-        if any(k in subject_lower for k in ["enterprise", "profiles query", "business request", "only requests", "only offers", "technological", "eu-corporate", "partnering"]):
-            print(f"→ Analizuję profil: {e['subject']}")
+        if any(k in subject_lower for k in ["profile", "enterprise", "business", "request", "offer", "query", "partnering"]):
             analysis = analyze_with_grok(e["body"], e["subject"])
-            report += f"{'='*80}\n"
-            report += f"Temat: {e['subject']}\n"
-            report += f"Data: {e['date']}\n\n"
-            report += analysis + "\n\n"
+            report += f"{'='*80}\nTemat: {e['subject']}\nData: {e['date']}\n\n{analysis}\n\n"
         else:
-            report += f"Pominięty mail: {e['subject']}\n\n"
+            report += f"Pominięty: {e['subject']}\n\n"
 
     send_report(report)
-    print("Zakończono przetwarzanie.")
-
+    print("Zakończono.")
 
 if __name__ == "__main__":
     main()

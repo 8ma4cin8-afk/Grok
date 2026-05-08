@@ -22,7 +22,7 @@ def fetch_new_emails():
         mail.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD)
         mail.select("inbox")
         _, messages = mail.search(None, 'UNSEEN')
-        email_ids = messages[0].split()[-12:]
+        email_ids = messages[0].split()[-15:]
 
         emails = []
         for eid in email_ids:
@@ -42,24 +42,24 @@ def fetch_new_emails():
             else:
                 body = msg.get_payload(decode=True).decode(errors="ignore")
 
-            emails.append({"subject": subject, "body": body[:14500], "date": msg["Date"]})
+            emails.append({"subject": subject, "body": body[:14000], "date": msg["Date"]})
         mail.logout()
         return emails
     except Exception as e:
-        print(f"BŁĄD pobierania: {e}")
+        print(f"BŁĄD: {e}")
         return []
 
 
 def analyze_with_grok(profile_text, subject):
-    prompt = f"""Jesteś moim ekspertem EEN do matchingu dla Dolnego Śląska.
+    prompt = f"""Jesteś ekspertem EEN matchmaking dla Dolnego Śląska.
 
-Przeanalizuj profil i przygotuj raport dokładnie w tym formacie:
+Dla PODANEGO poniżej jednego profilu przygotuj **bardzo konkretny raport** w dokładnie tym formacie:
 
-**Profil:** {subject}
+**=== PROFIL: {subject} ===**
 
 **Ocena potencjału dla Dolnego Śląska:** X/10
 
-**Czy Polska jest targetem?** (Tak / Nie / All countries)
+**Czy Polska jest w target countries?** (Tak / Nie / All countries)
 
 **Krótki opis profilu:** (2-3 zdania)
 
@@ -68,18 +68,18 @@ Przeanalizuj profil i przygotuj raport dokładnie w tym formacie:
 | Priorytet | Firma | Lokalizacja | Dlaczego pasuje? | Kontakt | Komentarz |
 |-----------|-------|-------------|------------------|---------|---------|
 
-**Gotowy szablon wiadomości mailowej** (profesjonalny, gotowy do kopiuj-wklej):
+**Gotowy szablon wiadomości mailowej** (gotowy do kopiowania):
 
 ---
-[Tutaj pełny mail]
+[Tutaj pełny, profesjonalny mail po polsku]
 ---
 
-**Dodatkowe uwagi:**
+**Uwagi dodatkowe:**
 
-Profil:
+Profil do analizy:
 {profile_text}
 
-Bądź konkretny. Używaj realnych firm z Dolnego Śląska (Wrocław, Legnica, Wałbrzych, Lubin, Jelenia Góra itd.). Jeśli Polska nie jest targetem — wyraźnie napisz na początku."""
+Bądź konkretny. Używaj realnych firm z Dolnego Śląska."""
 
     try:
         response = requests.post(
@@ -88,10 +88,10 @@ Bądź konkretny. Używaj realnych firm z Dolnego Śląska (Wrocław, Legnica, W
             json={
                 "model": "grok-4",
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.25,
-                "max_tokens": 2400
+                "temperature": 0.3,
+                "max_tokens": 2000
             },
-            timeout=100
+            timeout=90
         )
         if response.status_code != 200:
             return f"BŁĄD API: {response.status_code}"
@@ -113,6 +113,7 @@ def send_report(report_content):
         server.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD)
         server.send_message(msg)
         server.quit()
+        print("Raport wysłany")
     except Exception as e:
         print(f"Błąd wysyłki: {e}")
 
@@ -122,12 +123,14 @@ def main():
     report = f"🔍 RAPORT EEN MATCHING\nData: {datetime.now().strftime('%Y-%m-%d %H:%M')}\nLiczba profili: {len(emails)}\n\n"
 
     for e in emails:
-        if any(k in e["subject"].lower() for k in ["profile", "query", "request", "offer", "enterprise", "business"]):
+        subject_lower = e["subject"].lower()
+        if any(k in subject_lower for k in ["profile", "query", "request", "offer", "business", "technological", "enterprise"]):
+            print(f"Analizuję: {e['subject']}")
             analysis = analyze_with_grok(e["body"], e["subject"])
             report += analysis + "\n\n" + "="*100 + "\n\n"
 
     send_report(report)
-    print("Raport wysłany")
+    print("Zakończono")
 
 if __name__ == "__main__":
     main()

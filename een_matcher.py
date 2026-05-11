@@ -44,7 +44,7 @@ def fetch_new_emails():
             else:
                 body = msg.get_payload(decode=True).decode(errors="ignore")
 
-            emails.append({"subject": subject, "body": body[:12000], "date": msg["Date"]})
+            emails.append({"subject": subject, "body": body[:14000], "date": msg["Date"]})
         mail.logout()
         return emails
     except Exception as e:
@@ -53,17 +53,20 @@ def fetch_new_emails():
 
 
 def analyze_with_grok(profile_text, subject):
-    prompt = f"""Jesteś moim specjalistą EEN od matchingu dla Dolnego Śląska i Opolszczyzny.
+    prompt = f"""Jesteś moim ekspertem EEN do matchingu dla Dolnego Śląska i Opolszczyzny.
 
-Użyj dokładnie tego formatu dla każdego profilu:
+**Ściśle przestrzegaj zasad:**
+- Profile polskie (nadawca z Polski) → pomiń całkowicie
+- Jeśli Polska nie jest w target countries → pomiń lub napisz "Polska nie jest targetem"
+- Tylko zagraniczne profile gdzie Polska jest targetem → zrób pełną analizę
+
+Użyj dokładnie tego formatu:
 
 **Profil:** {subject}
 
-**Ocena potencjału:** Wysoki / Średni / Niski (X/10)
+**Ocena potencjału:** Wysoki / Średni / Niski (X/10) + krótkie uzasadnienie
 
-**Opis:** (2-3 zdania)
-
-**Zaktualizowana tabela z kontaktami dla profilu {subject.split()[0] if subject else 'Profil'}**
+**Zaktualizowana tabela z kontaktami dla profilu {subject.split()[0] if ' ' in subject else subject}**
 
 | Priorytet | Firma | Lokalizacja | Kontakt (tel + email) | Strona www | Komentarz |
 |-----------|-------|-------------|-----------------------|------------|---------|
@@ -71,32 +74,25 @@ Użyj dokładnie tego formatu dla każdego profilu:
 **Gotowy szablon maila:**
 
 ---
-[pełny profesjonalny mail]
+[profesjonalny mail gotowy do wysłania]
 ---
 
 Profil do analizy:
-{profile_text[:11000]}"""
+{profile_text[:13000]}"""
 
     try:
         response = requests.post(
             "https://api.x.ai/v1/chat/completions",
             headers={"Authorization": f"Bearer {GROK_API_KEY}"},
             json={
-                "model": "grok-3",           # szybszy model
+                "model": "grok-3",
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
-                "max_tokens": 1800
+                "max_tokens": 2200
             },
-            timeout=180                      # mocno zwiększony timeout
+            timeout=180   # 3 minuty
         )
-        
-        if response.status_code != 200:
-            return f"BŁĄD API {response.status_code}"
-            
         return response.json()["choices"][0]["message"]["content"]
-        
-    except requests.exceptions.Timeout:
-        return "TIMEOUT - Grok nie zdążył odpowiedzieć"
     except Exception as e:
         return f"BŁĄD GROK: {str(e)}"
 
@@ -129,7 +125,7 @@ def main():
         if any(k in e["subject"].lower() for k in ["profile", "query", "request", "offer", "business", "enterprise"]):
             print(f"Analizuję: {e['subject']}")
             analysis = analyze_with_grok(e["body"], e["subject"])
-            full_report += analysis + "\n\n" + "="*90 + "\n\n"
+            full_report += analysis + "\n\n" + "="*100 + "\n\n"
 
     send_report(full_report)
 

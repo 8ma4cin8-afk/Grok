@@ -2,8 +2,8 @@ name: EEN Daily Matcher
 
 on:
   schedule:
-    - cron: '0,10,20,30,40,50 * * * *'   # co 10 minut
-  workflow_dispatch:   # pozwala uruchomić ręcznie
+    - cron: '0 7 * * *'      # codziennie o 7:00 UTC = 9:00 czasu polskiego (CEST)
+  workflow_dispatch:         # pozwala uruchomić ręcznie
 
 jobs:
   een-matching:
@@ -19,8 +19,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: |
-          pip install requests
+        run: pip install requests
 
       - name: Run EEN Matcher
         env:

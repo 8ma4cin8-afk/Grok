@@ -56,18 +56,24 @@ def fetch_new_emails():
 def analyze_with_grok(profile_text, subject):
     prompt = f"""Analizuj TEN JEDEN profil EEN.
 
-Zasady:
-- Jeśli nadawca z Polski → zwróć "is_polish": true
-- Jeśli Polska nie jest targetem → "poland_target": "Nie"
-- Tylko wtedy gdy Polska jest targetem → zrób pełną analizę z firmami
-
 Profil:
 Temat: {subject}
 
 Treść:
 {profile_text[:12000]}
 
-Zwróć wynik jako czysty JSON."""
+Zwróć wynik jako czysty JSON z następującymi polami:
+{{
+  "profile_id": "{subject}",
+  "is_polish": false,
+  "poland_target": "Tak",
+  "score": 7,
+  "short_description": "krótki opis",
+  "companies": [
+    {{"name": "Nazwa firmy", "location": "Miasto", "why": "Dlaczego pasuje", "contact": "email/telefon", "comment": "Komentarz"}}
+  ],
+  "email_template": "Pełny tekst gotowego maila"
+}}"""
 
     try:
         response = requests.post(
@@ -81,7 +87,6 @@ Zwróć wynik jako czysty JSON."""
             },
             timeout=80
         )
-        
         content = response.json()["choices"][0]["message"]["content"]
         json_match = re.search(r'\{.*\}', content, re.DOTALL)
         if json_match:
@@ -96,9 +101,9 @@ def generate_html(reports):
     <html>
     <head><meta charset="utf-8"><title>Raport EEN Matching</title>
     <style>
-        body {{ font-family: Arial, sans-serif; margin: 40px; line-height: 1.5; }}
+        body {{ font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }}
         h1 {{ color: #1a3c6e; }}
-        h2 {{ color: #2c5aa0; border-bottom: 2px solid #ddd; padding-bottom: 8px; }}
+        h2 {{ color: #2c5aa0; border-bottom: 2px solid #ddd; }}
         table {{ border-collapse: collapse; width: 100%; margin: 15px 0; }}
         th, td {{ border: 1px solid #999; padding: 8px; text-align: left; }}
         th {{ background-color: #f0f0f0; }}
@@ -112,14 +117,14 @@ def generate_html(reports):
 
     for r in reports:
         if r.get("is_polish"):
-            html += f"<h2>❌ {r.get('profile_id', 'Profil')} - Profil polski (pominięty)</h2><hr>"
+            html += f"<h2>❌ {r.get('profile_id')} — Profil polski (pominięty)</h2><hr>"
             continue
         if r.get("poland_target") == "Nie":
-            html += f"<h2>❌ {r.get('profile_id', 'Profil')} - Polska nie jest targetem</h2><hr>"
+            html += f"<h2>❌ {r.get('profile_id')} — Polska nie jest targetem</h2><hr>"
             continue
 
-        html += f"<h2>✅ {r.get('profile_id', 'Profil')}</h2>"
-        html += f"<p><strong>Ocena:</strong> {r.get('score', 'N/A')}/10 | <strong>Polska target:</strong> {r.get('poland_target', 'Nieznane')}</p>"
+        html += f"<h2>✅ {r.get('profile_id')}</h2>"
+        html += f"<p><strong>Ocena:</strong> {r.get('score', 'N/A')}/10 | <strong>Polska w target:</strong> {r.get('poland_target', 'Nieznane')}</p>"
         html += f"<p><strong>Opis:</strong> {r.get('short_description', '')}</p>"
 
         html += "<table><tr><th>Priorytet</th><th>Firma</th><th>Lokalizacja</th><th>Dlaczego pasuje?</th><th>Kontakt</th><th>Komentarz</th></tr>"
@@ -130,6 +135,7 @@ def generate_html(reports):
         html += f"<h3>Gotowy szablon maila:</h3><pre>{r.get('email_template', '')}</pre><hr>"
 
     html += "</body></html>"
+
     with open("een_report.html", "w", encoding="utf-8") as f:
         f.write(html)
     return "een_report.html"
@@ -141,8 +147,11 @@ def send_report(reports):
     msg['To'] = REPORT_TO
     msg['Subject'] = f"Raport EEN Matching - {datetime.now().strftime('%Y-%m-%d')}"
 
-    body = f"Raport EEN Matching za dzień {datetime.now().strftime('%Y-%m-%d')}\nLiczba przeanalizowanych profili: {len(reports)}\n\n"
+    body = f"Raport EEN Matching - {datetime.now().strftime('%Y-%m-%d %H:%M')}\nLiczba przeanalizowanych profili: {len(reports)}\n\n"
     msg.attach(MIMEText(body, 'plain'))
+
+    # Generujemy HTML
+    generate_html(reports)
 
     with open("een_report.html", "rb") as f:
         attach = MIMEApplication(f.read(), _subtype="html")
@@ -167,13 +176,13 @@ def main():
     for e in emails:
         if any(k in e["subject"].lower() for k in ["profile", "query", "request", "offer", "business", "enterprise"]):
             analysis = analyze_with_grok(e["body"], e["subject"])
-            if isinstance(analysis, dict):
+            if isinstance(analysis, dict) and "error" not in analysis:
                 reports.append(analysis)
 
     if reports:
         send_report(reports)
     else:
-        print("Nie znaleziono odpowiednich profili")
+        print("Nie znaleziono profili do analizy")
 
 if __name__ == "__main__":
     main()

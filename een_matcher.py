@@ -24,7 +24,7 @@ def fetch_new_emails():
         mail.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD)
         mail.select("inbox")
         _, messages = mail.search(None, 'UNSEEN')
-        email_ids = messages[0].split()[-15:]
+        email_ids = messages[0].split()[-12:]
 
         emails = []
         for eid in email_ids:
@@ -44,7 +44,7 @@ def fetch_new_emails():
             else:
                 body = msg.get_payload(decode=True).decode(errors="ignore")
 
-            emails.append({"subject": subject, "body": body[:15000], "date": msg["Date"]})
+            emails.append({"subject": subject, "body": body[:12000], "date": msg["Date"]})
         mail.logout()
         return emails
     except Exception as e:
@@ -53,48 +53,50 @@ def fetch_new_emails():
 
 
 def analyze_with_grok(profile_text, subject):
-    prompt = f"""Z każdego profilu w tym emailu wyciągnij kod referencyjny i zbuduj link.
+    prompt = f"""Jesteś moim specjalistą EEN od matchingu dla Dolnego Śląska i Opolszczyzny.
 
-SYSTEM PROMPT – Analiza profili EEN (Dolny Śląsk + Opolszczyzna)
+Użyj dokładnie tego formatu dla każdego profilu:
 
-Jesteś moim specjalistą od matchingu profili Enterprise Europe Network. Zawsze pracujemy według tej dokładnej rutyny i formatu.
+**Profil:** {subject}
 
-Obowiązkowy format wyjścia dla każdego profilu:
+**Ocena potencjału:** Wysoki / Średni / Niski (X/10)
 
-1. Nagłówek profilu (Referencja, Kraj, Typ, krótki opis)
+**Opis:** (2-3 zdania)
 
-2. Ocena potencjału (Wysoki / Średni / Niski + uzasadnienie)
+**Zaktualizowana tabela z kontaktami dla profilu {subject.split()[0] if subject else 'Profil'}**
 
-3. Zaktualizowana tabela:
+| Priorytet | Firma | Lokalizacja | Kontakt (tel + email) | Strona www | Komentarz |
+|-----------|-------|-------------|-----------------------|------------|---------|
 
-Zaktualizowana tabela z kontaktami dla profilu [REFERENCJA]
-Priorytet | Firma | Lokalizacja | Kontakt (telefon + email) | Strona www | Komentarz
+**Gotowy szablon maila:**
 
-Zasady:
-- Tylko firmy z Dolnego Śląska i Opolszczyzny
-- Zawsze 5 firm (lub 4-6)
-- Profile polskie całkowicie pomijamy
-- Jeśli Polska nie jest targetem - napisz to wyraźnie na początku
+---
+[pełny profesjonalny mail]
+---
 
 Profil do analizy:
-Temat: {subject}
-
-Treść:
-{profile_text}"""
+{profile_text[:11000]}"""
 
     try:
         response = requests.post(
             "https://api.x.ai/v1/chat/completions",
             headers={"Authorization": f"Bearer {GROK_API_KEY}"},
             json={
-                "model": "grok-3",
+                "model": "grok-3",           # szybszy model
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
-                "max_tokens": 2200
+                "max_tokens": 1800
             },
-            timeout=90
+            timeout=180                      # mocno zwiększony timeout
         )
+        
+        if response.status_code != 200:
+            return f"BŁĄD API {response.status_code}"
+            
         return response.json()["choices"][0]["message"]["content"]
+        
+    except requests.exceptions.Timeout:
+        return "TIMEOUT - Grok nie zdążył odpowiedzieć"
     except Exception as e:
         return f"BŁĄD GROK: {str(e)}"
 
@@ -127,7 +129,7 @@ def main():
         if any(k in e["subject"].lower() for k in ["profile", "query", "request", "offer", "business", "enterprise"]):
             print(f"Analizuję: {e['subject']}")
             analysis = analyze_with_grok(e["body"], e["subject"])
-            full_report += analysis + "\n\n" + "="*100 + "\n\n"
+            full_report += analysis + "\n\n" + "="*90 + "\n\n"
 
     send_report(full_report)
 

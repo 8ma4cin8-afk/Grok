@@ -1,6 +1,8 @@
 import imaplib
 import email
 import os
+import json
+import re
 from datetime import datetime
 from email.header import decode_header
 import requests
@@ -8,7 +10,6 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
-import re
 
 # ================== KONFIGURACJA ==================
 GMAIL_EMAIL = os.getenv("GMAIL_EMAIL")
@@ -44,36 +45,23 @@ def fetch_new_emails():
             else:
                 body = msg.get_payload(decode=True).decode(errors="ignore")
 
-            emails.append({"subject": subject, "body": body, "date": msg["Date"]})
+            emails.append({"subject": subject, "body": body[:13000], "date": msg["Date"]})
         mail.logout()
         return emails
     except Exception as e:
-        print(f"BŁĄD: {e}")
+        print(f"BŁĄD pobierania: {e}")
         return []
 
 
 def analyze_with_grok(profile_text, subject):
-    prompt = f"""To jest jeden profil EEN z paczki "Profiles query".
+    prompt = f"""Analizuj TEN JEDEN profil EEN.
 
 Temat: {subject}
 
 Treść:
-{profile_text[:11000]}
+{profile_text[:12000]}
 
-Zasady:
-- Jeśli nadawca z Polski lub Polska nie jest targetem → pomiń
-- Zrób analizę tylko jeśli to zagraniczny profil z Polską jako target
-
-Zwróć JSON:
-{{
-  "profile_id": "...",
-  "is_polish": false,
-  "poland_target": "Tak",
-  "score": 8,
-  "short_description": "...",
-  "companies": [5 firm z Dolnego Śląska],
-  "email_template": "..."
-}}"""
+Zwróć wynik jako czysty JSON."""
 
     try:
         response = requests.post(
@@ -83,34 +71,81 @@ Zwróć JSON:
                 "model": "grok-3",
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
-                "max_tokens": 1600
+                "max_tokens": 1800
             },
-            timeout=75
+            timeout=80
         )
         content = response.json()["choices"][0]["message"]["content"]
         json_match = re.search(r'\{.*\}', content, re.DOTALL)
         if json_match:
             return json.loads(json_match.group(0))
-        return {"error": "no json"}
+        return {"error": "Brak JSON"}
     except Exception as e:
         return {"error": str(e)}
 
 
-# ... (pozostała część send_report i main bez zmian - możesz zostawić z poprzedniej wersji)
+def send_report(reports):
+    msg = MIMEMultipart()
+    msg['From'] = GMAIL_EMAIL
+    msg['To'] = REPORT_TO
+    msg['Subject'] = f"Raport EEN Matching - {datetime.now().strftime('%Y-%m-%d')}"
+
+    body = f"Raport EEN Matching - {datetime.now().strftime('%Y-%m-%d %H:%M')}\nLiczba przeanalizowanych profili: {len(reports)}\n\n"
+    msg.attach(MIMEText(body, 'plain'))
+
+    # Generowanie HTML
+    html = f"""
+    <html><head><meta charset="utf-8"><title>Raport EEN</title>
+    <style>body{{font-family:Arial,sans-serif;margin:40px}} table{{border-collapse:collapse;width:100%}} th,td{{border:1px solid #999;padding:8px}}</style>
+    </head><body>
+    <h1>Raport EEN Matching - Dolny Śląsk</h1>
+    <p>Data: {datetime.now().strftime('%Y-%m-%d %H:%M')}</p><hr>
+    """
+
+    for r in reports:
+        html += f"<h2>{r.get('profile_id', 'Profil')}</h2>"
+        html += f"<p>Ocena: {r.get('score', 'N/A')}/10</p>"
+        html += "<table><tr><th>Firma</th><th>Lokalizacja</th><th>Dlaczego pasuje?</th><th>Kontakt</th><th>Komentarz</th></tr>"
+        for c in r.get('companies', []):
+            html += f"<tr><td>{c.get('name')}</td><td>{c.get('location')}</td><td>{c.get('why')}</td><td>{c.get('contact')}</td><td>{c.get('comment')}</td></tr>"
+        html += "</table><hr>"
+
+    html += "</body></html>"
+
+    with open("een_report.html", "w", encoding="utf-8") as f:
+        f.write(html)
+
+    with open("een_report.html", "rb") as f:
+        attach = MIMEApplication(f.read(), _subtype="html")
+        attach.add_header('Content-Disposition', 'attachment', filename="Raport_EEN_Matching.html")
+        msg.attach(attach)
+
+    try:
+        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+        server.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        print("Raport wysłany")
+    except Exception as e:
+        print(f"Błąd wysyłki: {e}")
+
 
 def main():
     emails = fetch_new_emails()
-    print(f"Znaleziono {len(emails)} maili")
+    print(f"Znaleziono {len(emails)} maili do analizy")
 
     reports = []
     for e in emails:
-        if "Profiles query" in e["subject"] or "Only Requests" in e["subject"] or "Only Offers" in e["subject"]:
+        if any(k in e["subject"].lower() for k in ["profile", "query", "request", "offer", "business", "enterprise"]):
             print(f"Analizuję: {e['subject']}")
             analysis = analyze_with_grok(e["body"], e["subject"])
-            reports.append(analysis)
+            if isinstance(analysis, dict) and "error" not in analysis:
+                reports.append(analysis)
 
-    # Tymczasowo drukujemy w konsoli
-    print(json.dumps(reports, indent=2, ensure_ascii=False))
+    if reports:
+        send_report(reports)
+    else:
+        print("Nie znaleziono profili do analizy")
 
 if __name__ == "__main__":
     main()

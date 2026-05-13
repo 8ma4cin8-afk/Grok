@@ -1,6 +1,9 @@
 import imaplib
 import email
 import os
+print("=== KLUCZ GROK ===")
+print(os.getenv("GROK_API_KEY"))
+print("=================")
 import re
 import json
 from datetime import datetime

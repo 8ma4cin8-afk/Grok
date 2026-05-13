@@ -1,9 +1,6 @@
 import imaplib
 import email
 import os
-print("=== KLUCZ GROK ===")
-print(os.getenv("GROK_API_KEY"))
-print("=================")
 import re
 import json
 from datetime import datetime
@@ -18,7 +15,6 @@ GMAIL_EMAIL = os.getenv("GMAIL_EMAIL")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 GROK_API_KEY = os.getenv("GROK_API_KEY")
 REPORT_TO = "marcin.jablonski@pwr.edu.pl"
-
 # =================================================
 
 def fetch_new_emails():
@@ -28,16 +24,13 @@ def fetch_new_emails():
         mail.select("inbox")
         _, messages = mail.search(None, 'UNSEEN')
         email_ids = messages[0].split()[-20:]  # ostatnie 20
-
         emails = []
         for eid in email_ids:
             _, msg_data = mail.fetch(eid, "(RFC822)")
             msg = email.message_from_bytes(msg_data[0][1])
-
             subject = decode_header(msg["Subject"])[0][0]
             if isinstance(subject, bytes):
                 subject = subject.decode()
-
             body = ""
             if msg.is_multipart():
                 for part in msg.walk():
@@ -46,7 +39,6 @@ def fetch_new_emails():
                         break
             else:
                 body = msg.get_payload(decode=True).decode(errors="ignore")
-
             emails.append({"subject": subject, "body": body, "date": msg["Date"]})
         mail.logout()
         return emails
@@ -54,22 +46,18 @@ def fetch_new_emails():
         print(f"BŁĄD pobierania maili: {e}")
         return []
 
-
 def analyze_profiles_with_grok(full_text):
     prompt = f"""Jesteś specjalistą od matchingu EEN dla Dolnego Śląska i Opolszczyzny.
-
 Przetwórz poniższy mail z wieloma profilami i dla każdego zagranicznego profilu (gdzie Polska jest targetem) przygotuj blok w dokładnie tym formacie:
 
-**REFERENCJA**  
-**Kraj**  
-**Typ oferty**  
+**REFERENCJA**
+**Kraj**
+**Typ oferty**
 Krótki tytuł/opis
-
-**Ocena potencjału:** Wysoki / Średni / Niski (X/10)  
+**Ocena potencjału:** Wysoki / Średni / Niski (X/10)
 Krótki komentarz dlaczego.
 
 **Zaktualizowana tabela z kontaktami dla profilu REFERENCJA**
-
 | Priorytet | Firma | Lokalizacja | Kontakt (telefon + email) | Strona www | Komentarz |
 |-----------|-------|-------------|---------------------------|------------|-----------|
 | 1 | ... | ... | ... | ... | ... |
@@ -99,15 +87,12 @@ Mail do analizy:
     except Exception as e:
         return f"BŁĄD GROK: {str(e)}"
 
-
 def send_report(report_content):
     msg = MIMEMultipart()
     msg['From'] = GMAIL_EMAIL
     msg['To'] = REPORT_TO
     msg['Subject'] = f"Raport EEN Matching - Dolny Śląsk - {datetime.now().strftime('%Y-%m-%d')}"
-
     msg.attach(MIMEText(report_content, 'plain', 'utf-8'))
-
     try:
         server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
         server.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD)
@@ -117,22 +102,20 @@ def send_report(report_content):
     except Exception as e:
         print(f"Błąd wysyłki: {e}")
 
-
 def main():
     print(f"[{datetime.now()}] Start EEN Matcher")
     emails = fetch_new_emails()
-    
+   
     if not emails:
         print("Brak nowych maili")
         return
-
+   
     full_text = "\n\n".join([e["body"] for e in emails])
     print(f"Przetwarzam {len(emails)} maili...")
-
     report = analyze_profiles_with_grok(full_text)
-    
+   
     final_report = f"Raport EEN Matching - Dolny Śląsk\nData: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n{report}"
-    
+   
     send_report(final_report)
 
 if __name__ == "__main__":

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🧙 EOI Wizard | een-matcher</title>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 20px; background: #f4f6f9; color: #333; }
+    h1 { text-align: center; color: #0d6efd; }
+    .container { max-width: 1000px; margin: 0 auto; }
+    .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-bottom: 25px; }
+    label { font-weight: 600; display: block; margin: 12px 0 6px; }
+    textarea, input { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; }
+    button { background: #0d6efd; color: white; padding: 14px 32px; font-size: 18px; border: none; border-radius: 8px; cursor: pointer; }
+    button:hover { background: #0b5ed7; }
+    .output { background: #e7f3ff; padding: 20px; border-radius: 10px; margin-top: 20px; }
+    pre { background: #fff; padding: 15px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🧙 EOI Wizard – Expression of Interest</h1>
+    <p style="text-align:center;">Narzędzie do szybkiego wypełniania formularza EOI w systemie EEN</p>
+
+    <div class="card">
+      <h2>Krok 1: Zagraniczny profil</h2>
+      <label>POD Reference + Kraj + Tytuł profilu</label>
+      <textarea id="foreign" rows="2" placeholder="TRIT20260512031 - Italy - Looking for passive deodorizing technology"></textarea>
+    </div>
+
+    <div class="card">
+      <h2>Krok 2: Polski klient</h2>
+      <label>Opis firmy i kluczowe kompetencje (z polskiego profilu)</label>
+      <textarea id="polish" rows="6" placeholder="Wklej Short Summary + Full description lub kluczowe obszary ekspertyzy..."></textarea>
+      
+      <label>Kontakt osoby odpowiedzialnej PO STRONIE POLSKIEJ</label>
+      <input type="text" id="contactPL" placeholder="Imię Nazwisko | Telefon | E-mail">
+    </div>
+
+    <div style="text-align:center; margin: 30px 0;">
+      <button onclick="generateEOI()">🚀 Wygeneruj pola EOI</button>
+    </div>
+
+    <div class="card output" id="result" style="display:none;">
+      <h2>✅ Gotowe do skopiowania:</h2>
+      
+      <strong>1. In what type of technology, business or research collaboration are you interested in?</strong>
+      <pre id="field1"></pre>
+      
+      <strong>2. What type of further information do you need?</strong>
+      <pre id="field2"></pre>
+      
+      <strong>3. Presentation of the Interested Company</strong>
+      <pre id="field3"></pre>
+    </div>
+  </div>
+
+  <script>
+    function generateEOI() {
+      const foreign = document.getElementById('foreign').value.trim() || "zagraniczny profil";
+      let polishDesc = document.getElementById('polish').value.trim();
+      const contactPL = document.getElementById('contactPL').value.trim();
+
+      // Pole 1
+      document.getElementById('field1').textContent = 
+`The Polish company is interested in commercial agreement with technical assistance and/or research and development cooperation agreement regarding the passive deodorizing technology (${foreign}). The company offers specialised expertise in odour nuisance assessment & mitigation, green infrastructure (vegetative buffers, shelter belts), eco-mediation and environmental compliance.`;
+
+      // Pole 2
+      document.getElementById('field2').textContent = 
+`Detailed technical description of the proposed passive deodorizing solution (material composition, mechanism of action, current TRL, performance data under different T° and RH conditions), integration possibilities (filters, coatings, compact systems), safety documentation for human and food-contact applications, expected lifetime, maintenance requirements, scalability and cost structure.
+
+Contact details of the person directly responsible for the technical aspects of this Technology Request are essential and must be provided.`;
+
+      // Pole 3
+      let field3Text = polishDesc || "Polish environmental consultancy specialising in sustainability, odour management and green infrastructure.";
+      field3Text += `\n\nKontakt do osoby odpowiedzialnej po stronie polskiej:\n${contactPL || "[Imię Nazwisko | Telefon | E-mail]"}`;
+      document.getElementById('field3').textContent = field3Text;
+
+      document.getElementById('result').style.display = 'block';
+    }
+  </script>
+</body>
+</html>

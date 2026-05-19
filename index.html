@@ -13,7 +13,7 @@
     .card { background: white; padding: 28px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 25px; }
     label { font-weight: 600; display: block; margin: 18px 0 8px; color: #0d6efd; }
     textarea, input { width: 100%; padding: 14px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; box-sizing: border-box; }
-    textarea { height: 140px; resize: vertical; }
+    textarea { height: 130px; resize: vertical; }
     button { background: #0d6efd; color: white; padding: 16px 40px; font-size: 18px; border: none; border-radius: 8px; cursor: pointer; margin: 20px auto; display: block; }
     button:hover { background: #0b5ed7; }
     .output { background: #e7f3ff; padding: 30px; border-radius: 12px; margin-top: 30px; }
@@ -42,6 +42,12 @@
       <input type="text" id="contactPL" placeholder="Imię Nazwisko | Telefon | E-mail">
     </div>
 
+    <div class="card">
+      <h2>Krok 3: Strona www polskiego klienta (opcjonalnie)</h2>
+      <label>Link do strony firmy / LinkedIn / inne</label>
+      <input type="url" id="website" placeholder="https://www.nazwafirmy.pl">
+    </div>
+
     <div style="text-align:center;">
       <button onclick="generateEOI()">🚀 Wygeneruj pola EOI</button>
     </div>
@@ -65,17 +71,27 @@
       const foreign = document.getElementById('foreign').value.trim() || "[POD Reference]";
       const polish = document.getElementById('polish').value.trim();
       const contactPL = document.getElementById('contactPL').value.trim();
+      const website = document.getElementById('website').value.trim();
 
-      document.getElementById('field1').textContent = 
-`The Polish company is interested in a commercial agreement with technical assistance and/or research and development cooperation agreement concerning the technology from profile ${foreign}.`;
+      // Pole 1 – można później dopisać na podstawie strony www
+      let field1 = `The Polish company is interested in a commercial agreement with technical assistance and/or research and development cooperation agreement concerning the technology from profile ${foreign}.`;
+      if (website) field1 += ` More information about the company is available at: ${website}.`;
+      
+      document.getElementById('field1').textContent = field1;
 
+      // Pole 2
       document.getElementById('field2').textContent = 
 `Detailed technical description of the proposed solution (material composition, mechanism of action, current TRL, performance data under different temperature and humidity conditions), integration possibilities, safety documentation (especially for human and food contact), expected lifetime, maintenance requirements, scalability and cost structure. Information on conducted tests (e.g. ethylene removal, antimicrobial properties) is also required.
 
 Contact details of the person directly responsible for the technical aspects of this Technology Request are essential and must be provided.`;
 
+      // Pole 3
       let field3 = polish ? polish : "[Wklej tutaj opis polskiej firmy / Short Summary + kluczowe kompetencje]";
-      field3 += `\n\nKontakt do osoby odpowiedzialnej po stronie polskiej:\n${contactPL || "[Imię Nazwisko | Telefon | E-mail]"}\n\nJeśli posiadasz - dodaj załącznik .pdf z prezentacją swojego klienta.`;
+      
+      field3 += `\n\nKontakt do osoby odpowiedzialnej po stronie polskiej:\n${contactPL || "[Imię Nazwisko | Telefon | E-mail]"}`;
+      if (website) field3 += `\nStrona www: ${website}`;
+      
+      field3 += `\n\nJeśli posiadasz - dodaj załącznik .pdf z prezentacją swojego klienta.`;
 
       document.getElementById('field3').textContent = field3;
       document.getElementById('result').style.display = 'block';

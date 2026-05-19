@@ -45,7 +45,7 @@
       font-size: 16px;
       box-sizing: border-box;
     }
-    textarea { height: 120px; resize: vertical; }
+    textarea { height: 130px; resize: vertical; }
     button { 
       background: #0d6efd; 
       color: white; 
@@ -114,7 +114,7 @@
   <script>
     function generateEOI() {
       const foreign = document.getElementById('foreign').value.trim() || "[POD Reference]";
-      let polish = document.getElementById('polish').value.trim();
+      const polish = document.getElementById('polish').value.trim();
       const contactPL = document.getElementById('contactPL').value.trim();
 
       // Pole 1
@@ -128,8 +128,15 @@
 Contact details of the person directly responsible for the technical aspects of this Technology Request are essential and must be provided.`;
 
       // Pole 3
-      let field3 = (polish || "Polish company specialising in environmental engineering, odour management and green infrastructure.") + 
-`\n\nKontakt do osoby odpowiedzialnej po stronie polskiej:\n${contactPL || "[Imię Nazwisko | Telefon | E-mail]"}`;
+      let field3 = "";
+      if (polish) {
+        field3 = polish;
+      } else {
+        field3 = "[Wklej tutaj opis polskiej firmy / Short Summary + kluczowe kompetencje]";
+      }
+      
+      field3 += `\n\nKontakt do osoby odpowiedzialnej po stronie polskiej:\n${contactPL || "[Imię Nazwisko | Telefon | E-mail]"}\n\nJeśli posiadasz - dodaj załącznik .pdf z prezentacją swojego klienta.`;
+
       document.getElementById('field3').textContent = field3;
 
       document.getElementById('result').style.display = 'block';

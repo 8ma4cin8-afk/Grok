@@ -1,122 +1,161 @@
-import imaplib
-import email
-import os
+# een_matcher.py
 import re
 import json
 from datetime import datetime
-from email.header import decode_header
-import requests
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+from jinja2 import Template
+import pandas as pd
 
-# ================== KONFIGURACJA ==================
-GMAIL_EMAIL = os.getenv("GMAIL_EMAIL")
-GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
-GROK_API_KEY = os.getenv("GROK_API_KEY")
-REPORT_TO = "marcin.jablonski@pwr.edu.pl"
-# =================================================
+# ====================== KONFIGURACJA ======================
+try:
+    from weasyprint import HTML
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
+    print("⚠️  weasyprint nie jest zainstalowany. PDF nie będzie generowany.")
 
-def fetch_new_emails():
-    try:
-        mail = imaplib.IMAP4_SSL("imap.gmail.com")
-        mail.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD)
-        mail.select("inbox")
-        _, messages = mail.search(None, 'UNSEEN')
-        email_ids = messages[0].split()[-20:]  # ostatnie 20
-        emails = []
-        for eid in email_ids:
-            _, msg_data = mail.fetch(eid, "(RFC822)")
-            msg = email.message_from_bytes(msg_data[0][1])
-            subject = decode_header(msg["Subject"])[0][0]
-            if isinstance(subject, bytes):
-                subject = subject.decode()
-            body = ""
-            if msg.is_multipart():
-                for part in msg.walk():
-                    if part.get_content_type() in ["text/plain", "text/html"]:
-                        body = part.get_payload(decode=True).decode(errors="ignore")
-                        break
-            else:
-                body = msg.get_payload(decode=True).decode(errors="ignore")
-            emails.append({"subject": subject, "body": body, "date": msg["Date"]})
-        mail.logout()
-        return emails
-    except Exception as e:
-        print(f"BŁĄD pobierania maili: {e}")
-        return []
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="utf-8">
+    <title>Raport EEN Matching - Dolny Śląsk + Opolszczyzna {{ date }}</title>
+    <style>
+        body { font-family: Arial, Helvetica, sans-serif; margin: 40px; background: #f4f6f9; color: #333; }
+        h1 { color: #1e3a8a; }
+        .profile { background: white; padding: 25px; margin-bottom: 35px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        table { width: 100%; border-collapse: collapse; margin: 18px 0; }
+        th { background: #1e3a8a; color: white; padding: 12px; text-align: left; }
+        td { padding: 12px; border-bottom: 1px solid #ddd; }
+        tr:nth-child(even) { background: #f8fafc; }
+        .high { color: #166534; font-weight: bold; }
+        .medium { color: #854d0e; font-weight: bold; }
+        .low { color: #991b1b; }
+    </style>
+</head>
+<body>
+    <h1>Raport EEN Matching — Dolny Śląsk + Opolszczyzna</h1>
+    <p><strong>Data:</strong> {{ date }} | Przeanalizowano: {{ total }} profili | Pokazano Top {{ shown }}</p>
+    
+    {% for p in profiles %}
+    <div class="profile">
+        <h2>{{ p.ref }} — {{ p.country }}</h2>
+        <p><strong>{{ p.type }}</strong><br>{{ p.title }}</p>
+        <p><strong>Ocena potencjału: <span class="{{ p.potential.lower() }}">{{ p.potential }}</span></strong></p>
+        <p>{{ p.justification }}</p>
+        
+        <h3>5 najlepszych potencjalnych partnerów z regionu</h3>
+        {{ p.table_html | safe }}
+    </div>
+    {% endfor %}
+</body>
+</html>
+"""
 
-def analyze_profiles_with_grok(full_text):
-    prompt = f"""Jesteś specjalistą od matchingu EEN dla Dolnego Śląska i Opolszczyzny.
-Przetwórz poniższy mail z wieloma profilami i dla każdego zagranicznego profilu (gdzie Polska jest targetem) przygotuj blok w dokładnie tym formacie:
+def load_firms_db():
+    with open("firms_db.json", "r", encoding="utf-8") as f:
+        return json.load(f)["firms"]
 
-**REFERENCJA**
-**Kraj**
-**Typ oferty**
-Krótki tytuł/opis
-**Ocena potencjału:** Wysoki / Średni / Niski (X/10)
-Krótki komentarz dlaczego.
+def parse_profiles(text):
+    profiles = []
+    # Lepszy parser dla maili EEN
+    pattern = r'(Business Offer|Business Request|Technology Offer|Research & Development Request)\s+(B[O|R|T]\w{2}\d{8,})\s*(.+?)(?=\n\s*(Business Offer|Business Request|Technology Offer|Research & Development Request)|$)' 
+    matches = re.finditer(pattern, text, re.DOTALL | re.IGNORECASE)
+    
+    for m in matches:
+        p_type = m.group(1).strip()
+        ref = m.group(2).strip()
+        content = m.group(3).strip()
+        
+        country = content.split('\n')[0].strip()
+        title = content.split('\n')[1].strip() if '\n' in content else content[:180]
+        
+        profiles.append({
+            'ref': ref,
+            'type': p_type,
+            'country': country,
+            'title': title,
+            'full_text': content.lower()
+        })
+    return profiles
 
-**Zaktualizowana tabela z kontaktami dla profilu REFERENCJA**
-| Priorytet | Firma | Lokalizacja | Kontakt (telefon + email) | Strona www | Komentarz |
-|-----------|-------|-------------|---------------------------|------------|-----------|
-| 1 | ... | ... | ... | ... | ... |
+def match_companies(profile_text, firms, top_n=5):
+    profile_lower = profile_text.lower()
+    scored = []
+    
+    for firm in firms:
+        score = sum(3 for sector in firm["sectors"] if sector in profile_lower)
+        if score > 0:
+            scored.append((score, firm))
+    
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [item[1] for item in scored[:top_n]]
 
-Zasady:
-- Pomijaj całkowicie profile polskie
-- Zawsze dokładnie 5 firm z Dolnego Śląska / Opolszczyzny
-- Priorytet od najlepszego dopasowania
-- Kontakt jak najbardziej konkretny
-
-Mail do analizy:
-{full_text[:28000]}"""
-
-    try:
-        response = requests.post(
-            "https://api.x.ai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {GROK_API_KEY}"},
-            json={
-                "model": "grok-3",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,
-                "max_tokens": 4000
-            },
-            timeout=180
-        )
-        return response.json()["choices"][0]["message"]["content"]
-    except Exception as e:
-        return f"BŁĄD GROK: {str(e)}"
-
-def send_report(report_content):
-    msg = MIMEMultipart()
-    msg['From'] = GMAIL_EMAIL
-    msg['To'] = REPORT_TO
-    msg['Subject'] = f"Raport EEN Matching - Dolny Śląsk - {datetime.now().strftime('%Y-%m-%d')}"
-    msg.attach(MIMEText(report_content, 'plain', 'utf-8'))
-    try:
-        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
-        server.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        print("Raport wysłany pomyślnie")
-    except Exception as e:
-        print(f"Błąd wysyłki: {e}")
+def create_table_html(matched_firms):
+    if not matched_firms:
+        return "<p><em>Brak dopasowanych firm w bazie dla tej branży.</em></p>"
+    
+    data = []
+    for i, firm in enumerate(matched_firms, 1):
+        contact = f"{firm['phone']}<br>{firm['email']}" if firm['phone'] or firm['email'] else "Kontakt via strona"
+        data.append([
+            i,
+            firm['name'],
+            firm['location'],
+            contact,
+            firm['website'],
+            "Bardzo dobre dopasowanie branżowe" if i == 1 else "Dobre dopasowanie"
+        ])
+    
+    df = pd.DataFrame(data, columns=["Priorytet", "Firma", "Lokalizacja", "Kontakt", "Strona www", "Komentarz"])
+    return df.to_html(index=False, escape=False, classes="table")
 
 def main():
-    print(f"[{datetime.now()}] Start EEN Matcher")
-    emails = fetch_new_emails()
-   
-    if not emails:
-        print("Brak nowych maili")
-        return
-   
-    full_text = "\n\n".join([e["body"] for e in emails])
-    print(f"Przetwarzam {len(emails)} maili...")
-    report = analyze_profiles_with_grok(full_text)
-   
-    final_report = f"Raport EEN Matching - Dolny Śląsk\nData: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n{report}"
-   
-    send_report(final_report)
+    with open("input_email.txt", "r", encoding="utf-8") as f:
+        email_text = f.read()
+
+    firms = load_firms_db()
+    profiles = parse_profiles(email_text)
+    
+    ranked_profiles = sorted(profiles, key=lambda p: sum(1 for kw in ["cosmetic","private label","food","snack","automotive"] if kw in p['full_text'].lower()), reverse=True)
+    top_profiles = ranked_profiles[:10]
+
+    html_profiles = []
+    for p in top_profiles:
+        matched = match_companies(p['full_text'], firms)
+        table_html = create_table_html(matched)
+        
+        potential = "Wysoki" if any(kw in p['full_text'] for kw in ["cosmetic","private label","food"]) else "Średni"
+        
+        html_profiles.append({
+            'ref': p['ref'],
+            'country': p['country'],
+            'type': p['type'],
+            'title': p['title'],
+            'potential': potential,
+            'justification': "Bardzo silne dopasowanie do kluczowych sektorów regionu." if potential == "Wysoki" else "Umiarkowane dopasowanie – warto zweryfikować.",
+            'table_html': table_html
+        })
+
+    # Generowanie HTML
+    template = Template(HTML_TEMPLATE)
+    html_content = template.render(
+        date=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        total=len(profiles),
+        shown=len(top_profiles),
+        profiles=html_profiles
+    )
+
+    with open("raport_een.html", "w", encoding="utf-8") as f:
+        f.write(html_content)
+
+    print(f"✅ Wygenerowano raport HTML ({len(top_profiles)} profili)")
+
+    # Generowanie PDF
+    if PDF_AVAILABLE:
+        HTML(string=html_content).write_pdf("raport_een.pdf")
+        print("✅ Wygenerowano raport PDF: raport_een.pdf")
+    else:
+        print("⚠️  Zainstaluj weasyprint aby generować PDF: pip install weasyprint")
 
 if __name__ == "__main__":
     main()

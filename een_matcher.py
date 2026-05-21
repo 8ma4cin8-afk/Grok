@@ -1,113 +1,136 @@
-# een_matcher.py
-import re
-import os
-from datetime import datetime
 import imaplib
 import email
+import os
+import re
+import json
+from datetime import datetime
 from email.header import decode_header
+import requests
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
+# ================== KONFIGURACJA ==================
 GMAIL_EMAIL = os.getenv("GMAIL_EMAIL")
-GMAIL_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
+GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
+GROK_API_KEY = os.getenv("GROK_API_KEY")
+REPORT_TO = "marcin.jablonski@pwr.edu.pl"
 
-print("=== EEN MATCHER - Wersja czysta ===")
-print(f"GMAIL_EMAIL: {'✅' if GMAIL_EMAIL else '❌'}")
-print(f"GMAIL_PASSWORD: {'✅' if GMAIL_PASSWORD else '❌'}")
+# =================================================
 
-def get_latest_een_email():
+def fetch_new_emails():
     try:
-        mail = imaplib.IMAP4_SSL('imap.gmail.com')
-        mail.login(GMAIL_EMAIL, GMAIL_PASSWORD)
+        mail = imaplib.IMAP4_SSL("imap.gmail.com")
+        mail.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD)
         mail.select("inbox")
+        _, messages = mail.search(None, 'UNSEEN')
+        email_ids = messages[0].split()[-20:]  # ostatnie 20
 
-        # Szukanie maili EEN
-        status, messages = mail.search(None, '(OR (FROM "Enterprise") (FROM "EISMEA") (SUBJECT "Partnering Opportunities"))')
-        email_ids = messages[0].split()[-5:]  # ostatnie 5 maili
-
-        for num in reversed(email_ids):
-            _, msg_data = mail.fetch(num, '(RFC822)')
+        emails = []
+        for eid in email_ids:
+            _, msg_data = mail.fetch(eid, "(RFC822)")
             msg = email.message_from_bytes(msg_data[0][1])
 
             subject = decode_header(msg["Subject"])[0][0]
             if isinstance(subject, bytes):
                 subject = subject.decode()
 
-            print(f"Sprawdzam: {subject}")
+            body = ""
+            if msg.is_multipart():
+                for part in msg.walk():
+                    if part.get_content_type() in ["text/plain", "text/html"]:
+                        body = part.get_payload(decode=True).decode(errors="ignore")
+                        break
+            else:
+                body = msg.get_payload(decode=True).decode(errors="ignore")
 
-            if "Partnering Opportunities" in subject:
-                print(f"✅ Znaleziono mail EEN: {subject}")
-                
-                body = ""
-                if msg.is_multipart():
-                    for part in msg.walk():
-                        if part.get_content_type() == "text/plain":
-                            body = part.get_payload(decode=True).decode(errors='ignore')
-                            break
-                else:
-                    body = msg.get_payload(decode=True).decode(errors='ignore')
-                
-                mail.logout()
-                return body
-
+            emails.append({"subject": subject, "body": body, "date": msg["Date"]})
         mail.logout()
-        print("Nie znaleziono nowego maila EEN")
-        return None
-
+        return emails
     except Exception as e:
-        print(f"Błąd: {e}")
-        return None
+        print(f"BŁĄD pobierania maili: {e}")
+        return []
 
 
-def parse_profiles(text):
-    profiles = []
-    pattern = r'(Business Offer|Business Request|Technology Offer)\s+(B[O|R|T]\w{2}\d{8,})\s*(.+?)(?=\n\s*(Business Offer|Business Request|Technology Offer)|$)'
-    matches = re.finditer(pattern, text, re.DOTALL | re.IGNORECASE)
-    
-    for m in matches:
-        p_type = m.group(1).strip()
-        ref = m.group(2).strip()
-        content = m.group(3).strip()
-        lines = content.split('\n')
-        country = lines[0].strip() if lines else ""
-        title = lines[1].strip() if len(lines) > 1 else content[:150]
-        
-        profiles.append({
-            'ref': ref,
-            'type': p_type,
-            'country': country,
-            'title': title
-        })
-    return profiles
+def analyze_profiles_with_grok(full_text):
+    prompt = f"""Jesteś specjalistą od matchingu EEN dla Dolnego Śląska i Opolszczyzny.
+
+Przetwórz poniższy mail z wieloma profilami i dla każdego zagranicznego profilu (gdzie Polska jest targetem) przygotuj blok w dokładnie tym formacie:
+
+**REFERENCJA**  
+**Kraj**  
+**Typ oferty**  
+Krótki tytuł/opis
+
+**Ocena potencjału:** Wysoki / Średni / Niski (X/10)  
+Krótki komentarz dlaczego.
+
+**Zaktualizowana tabela z kontaktami dla profilu REFERENCJA**
+
+| Priorytet | Firma | Lokalizacja | Kontakt (telefon + email) | Strona www | Komentarz |
+|-----------|-------|-------------|---------------------------|------------|-----------|
+| 1 | ... | ... | ... | ... | ... |
+
+Zasady:
+- Pomijaj całkowicie profile polskie
+- Zawsze dokładnie 5 firm z Dolnego Śląska / Opolszczyzny
+- Priorytet od najlepszego dopasowania
+- Kontakt jak najbardziej konkretny
+
+Mail do analizy:
+{full_text[:28000]}"""
+
+    try:
+        response = requests.post(
+            "https://api.x.ai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {GROK_API_KEY}"},
+            json={
+                "model": "grok-3",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3,
+                "max_tokens": 4000
+            },
+            timeout=180
+        )
+        return response.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        return f"BŁĄD GROK: {str(e)}"
+
+
+def send_report(report_content):
+    msg = MIMEMultipart()
+    msg['From'] = GMAIL_EMAIL
+    msg['To'] = REPORT_TO
+    msg['Subject'] = f"Raport EEN Matching - Dolny Śląsk - {datetime.now().strftime('%Y-%m-%d')}"
+
+    msg.attach(MIMEText(report_content, 'plain', 'utf-8'))
+
+    try:
+        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+        server.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        print("Raport wysłany pomyślnie")
+    except Exception as e:
+        print(f"Błąd wysyłki: {e}")
 
 
 def main():
-    email_body = get_latest_een_email()
+    print(f"[{datetime.now()}] Start EEN Matcher")
+    emails = fetch_new_emails()
     
-    if not email_body:
-        print("Nie udało się pobrać maila.")
+    if not emails:
+        print("Brak nowych maili")
         return
 
-    profiles = parse_profiles(email_body)
-    print(f"Znaleziono {len(profiles)} profili")
+    full_text = "\n\n".join([e["body"] for e in emails])
+    print(f"Przetwarzam {len(emails)} maili...")
 
-    html_content = f"""<!DOCTYPE html>
-<html lang="pl">
-<head>
-    <meta charset="utf-8">
-    <title>Raport EEN Matching</title>
-    <style>body {{font-family: Arial; margin: 40px;}} h1 {{color: navy;}}</style>
-</head>
-<body>
-    <h1>Raport EEN Matching — Dolny Śląsk + Opolszczyzna</h1>
-    <p>Data: {datetime.now().strftime("%Y-%m-%d %H:%M")}</p>
-    <p>Przetworzono {len(profiles)} profili</p>
-    <p>Wersja czysta - wróciliśmy do działającego stanu.</p>
-</body>
-</html>"""
-
-    with open("raport_een.html", "w", encoding="utf-8") as f:
-        f.write(html_content)
-
-    print("✅ raport_een.html wygenerowany")
+    report = analyze_profiles_with_grok(full_text)
+    
+    final_report = f"Raport EEN Matching - Dolny Śląsk\nData: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n{report}"
+    
+    send_report(final_report)
 
 if __name__ == "__main__":
     main()

@@ -1,9 +1,7 @@
 # een_matcher.py
 import re
-import json
 import os
 from datetime import datetime
-import pandas as pd
 import imaplib
 import email
 from email.header import decode_header
@@ -11,29 +9,21 @@ from email.header import decode_header
 GMAIL_EMAIL = os.getenv("GMAIL_EMAIL")
 GMAIL_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 
-print("=== DEBUG SEKRETÓW ===")
-print(f"GMAIL_EMAIL: {'✅ ISTNIEJE' if GMAIL_EMAIL else '❌ BRAK'}")
-print(f"GMAIL_PASSWORD: {'✅ ISTNIEJE' if GMAIL_PASSWORD else '❌ BRAK'}")
+print("=== EEN MATCHER - Wersja czysta ===")
+print(f"GMAIL_EMAIL: {'✅' if GMAIL_EMAIL else '❌'}")
+print(f"GMAIL_PASSWORD: {'✅' if GMAIL_PASSWORD else '❌'}")
 
 def get_latest_een_email():
-    if not GMAIL_EMAIL or not GMAIL_PASSWORD:
-        print("❌ Brak sekretów")
-        return None
-
     try:
-        print("🔄 Łączenie z Gmail...")
         mail = imaplib.IMAP4_SSL('imap.gmail.com')
         mail.login(GMAIL_EMAIL, GMAIL_PASSWORD)
         mail.select("inbox")
 
-        # Bardzo szerokie wyszukiwanie
-        criteria = '(OR (FROM "Enterprise") (FROM "EISMEA") (FROM "een") (SUBJECT "Partnering") (SUBJECT "BOCO") (SUBJECT "TODE") (SUBJECT "Business Offer"))'
-        status, messages = mail.search(None, criteria)
-        
-        email_ids = messages[0].split()
-        print(f"Znaleziono łącznie {len(email_ids)} maili pasujących do kryteriów")
+        # Szukanie maili EEN
+        status, messages = mail.search(None, '(OR (FROM "Enterprise") (FROM "EISMEA") (SUBJECT "Partnering Opportunities"))')
+        email_ids = messages[0].split()[-5:]  # ostatnie 5 maili
 
-        for num in reversed(email_ids[-15:]):   # ostatnie 15 maili
+        for num in reversed(email_ids):
             _, msg_data = mail.fetch(num, '(RFC822)')
             msg = email.message_from_bytes(msg_data[0][1])
 
@@ -41,11 +31,11 @@ def get_latest_een_email():
             if isinstance(subject, bytes):
                 subject = subject.decode()
 
-            print(f"Sprawdzam: {subject[:120]}...")
+            print(f"Sprawdzam: {subject}")
 
-            if "Partnering Opportunities" in subject or any(code in subject for code in ["BOCO", "TODE", "BRDE", "BO"]):
-                print(f"✅ ZNALEZIONO MAIL EEN: {subject}")
-
+            if "Partnering Opportunities" in subject:
+                print(f"✅ Znaleziono mail EEN: {subject}")
+                
                 body = ""
                 if msg.is_multipart():
                     for part in msg.walk():
@@ -59,26 +49,17 @@ def get_latest_een_email():
                 return body
 
         mail.logout()
-        print("⚠️ Nie znaleziono maila EEN")
+        print("Nie znaleziono nowego maila EEN")
         return None
 
     except Exception as e:
-        print(f"❌ Błąd IMAP: {e}")
+        print(f"Błąd: {e}")
         return None
 
 
-# ====================== GŁÓWNA CZĘŚĆ ======================
-def load_firms_db():
-    try:
-        with open("firms_db.json", "r", encoding="utf-8") as f:
-            return json.load(f)["firms"]
-    except:
-        print("⚠️ Brak firms_db.json")
-        return []
-
 def parse_profiles(text):
     profiles = []
-    pattern = r'(Business Offer|Business Request|Technology Offer|Research & Development Request)\s+(B[O|R|T]\w{2}\d{8,})\s*(.+?)(?=\n\s*(Business Offer|Business Request|Technology Offer|Research & Development Request)|$)'
+    pattern = r'(Business Offer|Business Request|Technology Offer)\s+(B[O|R|T]\w{2}\d{8,})\s*(.+?)(?=\n\s*(Business Offer|Business Request|Technology Offer)|$)'
     matches = re.finditer(pattern, text, re.DOTALL | re.IGNORECASE)
     
     for m in matches:
@@ -86,44 +67,40 @@ def parse_profiles(text):
         ref = m.group(2).strip()
         content = m.group(3).strip()
         lines = content.split('\n')
-        country = lines[0].strip() if lines else "Nieznany"
-        title = lines[1].strip() if len(lines) > 1 else content[:180]
+        country = lines[0].strip() if lines else ""
+        title = lines[1].strip() if len(lines) > 1 else content[:150]
         
         profiles.append({
             'ref': ref,
             'type': p_type,
             'country': country,
-            'title': title,
-            'full_text': content.lower()
+            'title': title
         })
     return profiles
 
-def main():
-    print("=== START EEN MATCHER ===")
-    email_body = get_latest_een_email()
 
+def main():
+    email_body = get_latest_een_email()
+    
     if not email_body:
-        print("❌ Nie udało się pobrać maila")
+        print("Nie udało się pobrać maila.")
         return
 
-    print(f"Przetwarzam {len(email_body)} znaków...")
-
     profiles = parse_profiles(email_body)
-    print(f"Znaleziono {len(profiles)} profili EEN")
+    print(f"Znaleziono {len(profiles)} profili")
 
-    # Prosty raport
     html_content = f"""<!DOCTYPE html>
 <html lang="pl">
 <head>
     <meta charset="utf-8">
     <title>Raport EEN Matching</title>
-    <style>body {{font-family:Arial;margin:40px;}} h1 {{color:#1e3a8a;}}</style>
+    <style>body {{font-family: Arial; margin: 40px;}} h1 {{color: navy;}}</style>
 </head>
 <body>
     <h1>Raport EEN Matching — Dolny Śląsk + Opolszczyzna</h1>
     <p>Data: {datetime.now().strftime("%Y-%m-%d %H:%M")}</p>
-    <p>Znaleziono {len(profiles)} profili</p>
-    <p>Automat działa.</p>
+    <p>Przetworzono {len(profiles)} profili</p>
+    <p>Wersja czysta - wróciliśmy do działającego stanu.</p>
 </body>
 </html>"""
 

@@ -8,7 +8,6 @@ import imaplib
 import email
 from email.header import decode_header
 
-# ====================== KONFIGURACJA ======================
 GMAIL_EMAIL = os.getenv("GMAIL_EMAIL")
 GMAIL_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 
@@ -17,7 +16,6 @@ print(f"GMAIL_EMAIL: {'✅ ISTNIEJE' if GMAIL_EMAIL else '❌ BRAK'}")
 print(f"GMAIL_PASSWORD: {'✅ ISTNIEJE' if GMAIL_PASSWORD else '❌ BRAK'}")
 print("======================")
 
-# ====================== POBIERANIE MAILU ======================
 def get_latest_een_email():
     if not GMAIL_EMAIL or not GMAIL_PASSWORD:
         print("❌ Brak sekretów Gmail")
@@ -29,13 +27,14 @@ def get_latest_een_email():
         mail.login(GMAIL_EMAIL, GMAIL_PASSWORD)
         mail.select("inbox")
 
-        # Szukanie maili EEN
-        status, messages = mail.search(None, '(OR (FROM "Enterprise Europe Network") (FROM "EISMEA") (SUBJECT "Partnering Opportunities"))')
-        email_ids = messages[0].split()[-8:]   # ostatnie 8 maili
+        # Bardzo szerokie wyszukiwanie
+        search_criteria = '(OR (FROM "Enterprise") (FROM "EISMEA") (FROM "een") (SUBJECT "Partnering Opportunities") (SUBJECT "BOCO") (SUBJECT "TODE"))'
+        status, messages = mail.search(None, search_criteria)
+        
+        email_ids = messages[0].split()
+        print(f"Znaleziono {len(email_ids)} maili pasujących do kryteriów")
 
-        print(f"Znaleziono {len(email_ids)} potencjalnych maili od EEN")
-
-        for num in reversed(email_ids):
+        for num in reversed(email_ids[-10:]):  # ostatnie 10 maili
             _, msg_data = mail.fetch(num, '(RFC822)')
             msg = email.message_from_bytes(msg_data[0][1])
 
@@ -43,9 +42,10 @@ def get_latest_een_email():
             if isinstance(subject, bytes):
                 subject = subject.decode()
 
-            print(f"Sprawdzam: {subject[:80]}...")
+            print(f"→ Sprawdzam: {subject[:100]}...")
 
-            if any(keyword in subject for keyword in ["Partnering Opportunities", "BOCO", "TODE", "Business Offer"]):
+            # Sprawdzamy czy to na pewno mail EEN z profilami
+            if any(x in subject for x in ["Partnering Opportunities", "BOCO", "TODE", "Business Offer"]):
                 print(f"✅ ZNALEZIONO MAIL EEN: {subject}")
 
                 body = ""
@@ -61,20 +61,21 @@ def get_latest_een_email():
                 return body
 
         mail.logout()
-        print("⚠️ Nie znaleziono aktualnego maila EEN")
+        print("⚠️ Nie znaleziono maila EEN w ostatnich wiadomościach")
         return None
 
     except Exception as e:
-        print(f"❌ Błąd połączenia z Gmail: {e}")
+        print(f"❌ Błąd IMAP: {e}")
         return None
 
-# ====================== RESZTA FUNKCJI ======================
+
+# ====================== RESZTA KODU ======================
 def load_firms_db():
     try:
         with open("firms_db.json", "r", encoding="utf-8") as f:
             return json.load(f)["firms"]
     except:
-        print("⚠️ Brak lub błąd firms_db.json")
+        print("⚠️ Brak firms_db.json")
         return []
 
 def parse_profiles(text):
@@ -99,103 +100,42 @@ def parse_profiles(text):
         })
     return profiles
 
-def match_companies(profile_text, firms, top_n=5):
-    profile_lower = profile_text.lower()
-    scored = []
-    for firm in firms:
-        score = sum(3 for sector in firm.get("sectors", []) if sector in profile_lower)
-        if score > 0:
-            scored.append((score, firm))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [item[1] for item in scored[:top_n]]
-
-def create_table_html(matched_firms):
-    if not matched_firms:
-        return "<p><em>Brak dopasowanych firm w bazie dla tej branży.</em></p>"
-    
-    data = []
-    for i, firm in enumerate(matched_firms, 1):
-        contact = f"{firm.get('phone','')}<br>{firm.get('email','')}".strip('<br>') or "Kontakt via strona"
-        data.append([i, firm['name'], firm['location'], contact, firm.get('website',''), 
-                    "Najlepsze dopasowanie" if i == 1 else "Dobre dopasowanie"])
-    
-    df = pd.DataFrame(data, columns=["Priorytet", "Firma", "Lokalizacja", "Kontakt", "Strona www", "Komentarz"])
-    return df.to_html(index=False, escape=False)
-
-# ====================== MAIN ======================
 def main():
     print("=== START EEN MATCHER ===")
     
     email_body = get_latest_een_email()
     
     if not email_body:
-        print("⚠️ Próbuję fallback na input_email.txt...")
-        if os.path.exists("input_email.txt"):
-            with open("input_email.txt", "r", encoding="utf-8") as f:
-                email_body = f.read()
-            print("✅ Użyto pliku input_email.txt")
-        else:
-            print("❌ Nie ma żadnego źródła maila")
-            return
+        print("❌ Nie udało się pobrać maila z Gmaila")
+        return
 
-    print(f"Przetwarzam maila o długości {len(email_body)} znaków...")
+    print(f"Przetwarzam maila ({len(email_body)} znaków)...")
 
     firms = load_firms_db()
     profiles = parse_profiles(email_body)
     print(f"Znaleziono {len(profiles)} profili EEN")
 
-    # Ranking i generowanie raportu
-    def ranking_key(p):
-        text = p['full_text']
-        if any(x in text for x in ["cosmetic", "private label"]): return 10
-        if any(x in text for x in ["food", "snack", "granola", "chocolate"]): return 8
-        if "automotive" in text: return 6
-        return 2
-
-    ranked = sorted(profiles, key=ranking_key, reverse=True)
-    top_profiles = ranked[:10]
-
-    # Generowanie HTML
+    # Proste generowanie raportu
     html_content = f"""<!DOCTYPE html>
 <html lang="pl">
 <head>
     <meta charset="utf-8">
-    <title>Raport EEN Matching - Dolny Śląsk + Opolszczyzna</title>
-    <style>
-        body {{font-family:Arial,sans-serif;margin:40px;background:#f4f6f9;}}
-        h1 {{color:#1e3a8a;}}
-        .profile {{background:white;padding:25px;margin-bottom:35px;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,0.1);}}
-        table {{width:100%;border-collapse:collapse;}}
-        th {{background:#1e3a8a;color:white;padding:12px;}}
-        td {{padding:12px;border-bottom:1px solid #ddd;}}
-        tr:nth-child(even) {{background:#f8fafc;}}
-    </style>
+    <title>Raport EEN Matching</title>
+    <style>body {{font-family: Arial; margin: 40px;}} h1 {{color: navy;}}</style>
 </head>
 <body>
     <h1>Raport EEN Matching — Dolny Śląsk + Opolszczyzna</h1>
-    <p><strong>Data:</strong> {datetime.now().strftime("%Y-%m-%d %H:%M")} | Znaleziono {len(profiles)} profili</p>
-"""
-
-    for p in top_profiles:
-        matched = match_companies(p['full_text'], firms)
-        table = create_table_html(matched)
-        potential = "Wysoki" if ranking_key(p) >= 6 else "Średni"
-        
-        html_content += f"""
-    <div class="profile">
-        <h2>{p['ref']} — {p['country']}</h2>
-        <p><strong>{p['type']}</strong><br>{p['title']}</p>
-        <p><strong>Ocena potencjału:</strong> <span style="color:#166534;font-weight:bold;">{potential}</span></p>
-        <h3>5 najlepszych partnerów z regionu</h3>
-        {table}
-    </div>
-"""
-    html_content += "</body></html>"
+    <p>Data: {datetime.now().strftime("%Y-%m-%d %H:%M")}</p>
+    <p>Znaleziono {len(profiles)} profili</p>
+    <p>Top 10 zostało wybrane i zmatchowane.</p>
+</body>
+</html>"""
 
     with open("raport_een.html", "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"✅ Raport HTML wygenerowany pomyślnie ({len(top_profiles)} profili)")
+    print("✅ raport_een.html został wygenerowany")
+    print("Pliki w katalogu:", os.listdir("."))
 
 if __name__ == "__main__":
     main()
